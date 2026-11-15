@@ -6,8 +6,9 @@
  */
 
 #include "EventManager.hpp"
+#include <cstdlib>
 #include <math.h>
-#include <Windows.h>
+#include "Hook.hpp"
 
 EventManager::EventManager()
     : _startY(0.0f)
@@ -21,10 +22,12 @@ EventManager::EventManager()
     , _deltaX(0.0f)
     , _deltaY(0.0f)
     , _scale(1.0f)
-    , _relativemouseX(0)
-    , _relativemouseY(0)
     ,_leftButton(false)
     ,_rightButton(false)
+    , _relativemouseX(0)
+    , _relativemouseY(0)
+    ,_mousePosX(0)
+    ,_mousePosY(0)
 {
 	for (int i = 0; i < KEYAMOUT; i++)
 		_keyEvent[i].KeyBoardSignal = false;
@@ -37,6 +40,7 @@ EventManager::~EventManager() {
 
 void EventManager::MouseEventBegan(float deviceX, float deviceY)
 {
+    std::lock_guard<std::mutex> lock(_mutex);
     _lastX = deviceX;
     _lastY = deviceY;
     _startX = deviceX;
@@ -45,6 +49,7 @@ void EventManager::MouseEventBegan(float deviceX, float deviceY)
 
 void EventManager::MouseEventMoved(float deviceX, float deviceY)
 {
+    std::lock_guard<std::mutex> lock(_mutex);
     _lastX = deviceX;
     _lastY = deviceY;
 }
@@ -55,7 +60,9 @@ void EventManager::MouseEventMoved(float deviceX1, float deviceY1,
     float distance = CalculateDistance(deviceX1, deviceY1, deviceX2, deviceY2);
     float centerX = (deviceX1 + deviceX2) * 0.5f;
     float centerY = (deviceY1 + deviceY2) * 0.5f;
+    (void)distance;
 
+    std::lock_guard<std::mutex> lock(_mutex);
     _lastX = centerX;
     _lastY = centerY;
     _lastX1 = deviceX1;
@@ -68,6 +75,8 @@ void EventManager::MouseEventMoved(float deviceX1, float deviceY1,
 void EventManager::MouseEventMoved(int width, int height, float deviceX,
 				   float deviceY)
 {
+	std::lock_guard<std::mutex> lock(_mutex);
+
 	if (deviceX - _startX > 0) {
 		if (deviceX - _startX > width / 2) {
 			_startX += deviceX - _startX - width / 2;	
@@ -95,48 +104,70 @@ void EventManager::MouseEventMoved(int width, int height, float deviceX,
 
 void EventManager::KeyEventDown(int key)
 {
+	if (key < 0 || key >= KEYAMOUT)
+		return;
+	std::lock_guard<std::mutex> lock(_mutex);
 	_keyEvent[key].KeyBoardSignal = true;
 }
 
 void EventManager::KeyEventUp(int key) {
+	if (key < 0 || key >= KEYAMOUT)
+		return;
+	std::lock_guard<std::mutex> lock(_mutex);
 	_keyEvent[key].KeyBoardSignal = false;
 }
 
 void EventManager::LeftButtonDown() {
+	std::lock_guard<std::mutex> lock(_mutex);
 	_leftButton = true;
 }
 
 void EventManager::LeftButtonUp() {
+	std::lock_guard<std::mutex> lock(_mutex);
 	_leftButton = false;
 }
 
 void EventManager::RightButtonDown() {
+	std::lock_guard<std::mutex> lock(_mutex);
 	_rightButton = true;
 }
 
 void EventManager::RightButtonUp() {
+	std::lock_guard<std::mutex> lock(_mutex);
 	_rightButton = false;
 }
 
 void EventManager::SetRelativeMouse(int _rx, int _ry) {
+	std::lock_guard<std::mutex> lock(_mutex);
 	_relativemouseX += _rx;
 	_relativemouseY += _ry;
 }
 
 void EventManager::GetRelativeMouse(int &_rx, int &_ry) {
+	std::lock_guard<std::mutex> lock(_mutex);
 	_rx = _relativemouseX;
 	_ry = _relativemouseY;
 }
 
 void EventManager::GetCurrentMousePosition(int &_x, int &_y) {
-	POINT p;
-	GetCursorPos(&p);
-	_x = p.x;
-	_y = p.y;
+	int x = 0;
+	int y = 0;
+	bool available = Hook::GetCursorPosition(x, y);
+
+	std::lock_guard<std::mutex> lock(_mutex);
+	if (available) {
+		_mousePosX = x;
+		_mousePosY = y;
+	}
+	// Se a posição absoluta não estiver disponível (ex.: Wayland puro),
+	// mantém a última posição conhecida (inicialmente 0,0).
+	_x = _mousePosX;
+	_y = _mousePosY;
 }
 
 float EventManager::GetFlickDistance() const
 {
+    std::lock_guard<std::mutex> lock(_mutex);
     return CalculateDistance(_startX, _startY, _lastX, _lastY);
 }
 

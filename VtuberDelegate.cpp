@@ -5,7 +5,12 @@
 
 #include "VtuberDelegate.hpp"
 #include <GL/glew.h>
+#ifdef _WIN32
 #include <GLFW/glfw3.h>
+#else
+#include "EglContext.hpp"
+#endif
+#include <obs-module.h>
 #include "View.hpp"
 #include "Pal.hpp"
 #include "Define.hpp"
@@ -15,6 +20,10 @@
 #include "InfoReader.hpp"
 #include "EventManager.hpp"
 
+#include <algorithm>
+#include <chrono>
+#include <cstring>
+
 using namespace Csm;
 using namespace std;
 using namespace Define;
@@ -23,10 +32,6 @@ namespace {
 VtuberDelegate *s_instance = NULL;
 
     static uint16_t VtuberCount = 0;
-
-    static bool isFirst = true;
-
-    static GLFWwindow *_window;
     }
 
 VtuberDelegate *VtuberDelegate::GetInstance()
@@ -51,97 +56,337 @@ void VtuberDelegate::ReleaseInstance()
 
 bool VtuberDelegate::LoadResource(int id)
 {
-	_view->Initialize(id);
+	std::lock_guard<std::mutex> lock(_viewMutex);
+	if (_view)
+		_view->Initialize(id);
 	return true;
 }
 
 void VtuberDelegate::ReleaseResource(int id) {
+	// The render thread may be inside View::Render(id) right now.  Stop it
+	// before View::Release() frees the per-id view data.
+	StopRenderThread();
+
+	std::lock_guard<std::mutex> lock(_viewMutex);
 	_renderInfo[id].isLoadResource = false;
-	_view->Release(id);
+	if (_view)
+		_view->Release(id);
 }
 
 bool VtuberDelegate::Initialize(int id)
 {
-   
-    //Gl Init
-    if (isFirst) {
-	   
-	    isFirst = false;
-	    // GLFWの初期化
-	    if (glfwInit() == GL_FALSE)
-	    {
-		//return GL_FALSE;
-	    }
-	    
-	    // Windowの生成_
-	    glfwWindowHint(GLFW_VISIBLE, GL_FALSE);
-	    glfwWindowHint(GLFW_SAMPLES, 16);
-	    _window = glfwCreateWindow(RenderTargetWidth, RenderTargetHeight, "bongo cat", NULL,NULL);
-	    if (_window == NULL)
-	    {
+	{
+		std::lock_guard<std::mutex> lock(_frameMutex);
+		if (_renderThreadRunning) {
+			return true;
+		}
+
+		// A previous attempt may have failed and left a finished, but still
+		// joinable, thread handle behind.
+		if (_renderThread.joinable()) {
+			_renderThread.join();
+		}
+
+		_renderThreadRunning = true;
+		_renderStop = false;
+		_renderInitialized = false;
+		_renderInitFailed = false;
+		_hasFrame = false;
+		_frameWidth = 0;
+		_frameHeight = 0;
+	}
+
+	// The input hook is unrelated to OpenGL and can be started on the OBS
+	// thread before the dedicated render thread comes up.
+	if (_hook == NULL) {
+		_hook = new Hook();
+		_hook->Strat();
+	}
+
+	_renderThread = std::thread(&VtuberDelegate::RenderThreadMain, this, id);
+
+	return true;
+}
+
+void VtuberDelegate::RenderThreadMain(int id)
+{
+#ifdef _WIN32
+	// ---- GLFW: this thread is the exclusive owner ----------------------
+	if (glfwInit() == GLFW_FALSE) {
+		blog(LOG_ERROR,
+		     "[bongobs-cat] glfwInit failed; no display available. "
+		     "The source will stay blank.");
+		std::lock_guard<std::mutex> lock(_frameMutex);
+		_renderInitFailed = true;
+		_renderThreadRunning = false;
+		_frameCv.notify_all();
+		return;
+	}
+
+	glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+	glfwWindowHint(GLFW_SAMPLES, 16);
+	_window = glfwCreateWindow(RenderTargetWidth, RenderTargetHeight,
+				   "bongo cat", NULL, NULL);
+	if (_window == NULL) {
+		blog(LOG_ERROR,
+		     "[bongobs-cat] glfwCreateWindow failed; the source will "
+		     "stay blank.");
 		glfwTerminate();
-		return GL_FALSE;
-	    }
+		std::lock_guard<std::mutex> lock(_frameMutex);
+		_renderInitFailed = true;
+		_renderThreadRunning = false;
+		_frameCv.notify_all();
+		return;
+	}
 
-	    if (glfwRawMouseMotionSupported())
-		    glfwSetInputMode(_window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+	glfwMakeContextCurrent(_window);
 
-	    glfwMakeContextCurrent(_window);
+	if (glfwRawMouseMotionSupported())
+		glfwSetInputMode(_window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+#else
+	// ---- EGL: offscreen context, no X11/Wayland connection needed -----
+	if (!EglContext::Create(RenderTargetWidth, RenderTargetHeight)) {
+		blog(LOG_ERROR,
+		     "[bongobs-cat] não foi possível criar um contexto EGL; "
+		     "a source ficará em branco.");
+		std::lock_guard<std::mutex> lock(_frameMutex);
+		_renderInitFailed = true;
+		_renderThreadRunning = false;
+		_frameCv.notify_all();
+		return;
+	}
+#endif
 
-	    glewExperimental = GL_TRUE;
-	    if (glewInit() != GLEW_OK) {
-		    glfwTerminate();
-		    return GL_FALSE;
-	    }
-	    _hook = new Hook();
-	    _hook->Strat();
-    
-    }
-    
-    
-    // Cubism SDK の初期化
-    InitializeCubism();
+	// ---- GLEW: on Linux it resolves GL calls through EGL ---------------
+	glewExperimental = GL_TRUE;
+	if (glewInit() != GLEW_OK) {
+		blog(LOG_ERROR,
+		     "[bongobs-cat] glewInit failed; the source will stay blank.");
+#ifdef _WIN32
+		glfwMakeContextCurrent(NULL);
+		glfwDestroyWindow(_window);
+		_window = NULL;
+		glfwTerminate();
+#else
+		EglContext::Destroy();
+#endif
+		std::lock_guard<std::mutex> lock(_frameMutex);
+		_renderInitFailed = true;
+		_renderThreadRunning = false;
+		_frameCv.notify_all();
+		return;
+	}
 
-    _view->InitializeSpirite(id);
-    _view->InitializeModel(id);
+	// ---- Cubism / View initialisation (needs the GL context) -----------
+	{
+		std::lock_guard<std::mutex> lock(_viewMutex);
+		InitializeCubism();
+		_view->InitializeSpirite(id);
+		_view->InitializeModel(id);
+	}
 
-    return GL_TRUE;
+	{
+		std::lock_guard<std::mutex> lock(_frameMutex);
+		_renderInitialized = true;
+		_frameCv.notify_all();
+	}
+
+	std::vector<uint8_t> readback;
+	while (true) {
+		{
+			std::unique_lock<std::mutex> lock(_frameMutex);
+			if (_renderStop) {
+				break;
+			}
+		}
+
+		int fbWidth = 0;
+		int fbHeight = 0;
+#ifdef _WIN32
+		glfwGetFramebufferSize(_window, &fbWidth, &fbHeight);
+#else
+		fbWidth = EglContext::Width();
+		fbHeight = EglContext::Height();
+#endif
+
+		// Never read more pixels than the actual framebuffer or than the
+		// size we advertised for the readback buffer.
+		const int readWidth = std::min(fbWidth, (int)RenderTargetWidth);
+		const int readHeight = std::min(fbHeight, (int)RenderTargetHeight);
+
+		if (readWidth > 0 && readHeight > 0) {
+			const size_t readSize = (size_t)readWidth *
+						(size_t)readHeight * 4u;
+			if (readback.size() != readSize) {
+				readback.resize(readSize);
+			}
+
+			{
+				std::lock_guard<std::mutex> lock(_viewMutex);
+				glEnable(GL_MULTISAMPLE);
+				glViewport(0, 0, fbWidth, fbHeight);
+				glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+				glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+				_view->Render(id);
+			}
+
+			glReadPixels(0, 0, readWidth, readHeight, GL_RGBA,
+				     GL_UNSIGNED_BYTE, readback.data());
+
+			{
+				std::unique_lock<std::mutex> lock(_frameMutex);
+				_frameBuffer.swap(readback);
+				_frameWidth = readWidth;
+				_frameHeight = readHeight;
+				++_frameSequence;
+				_hasFrame = true;
+				_frameCv.notify_all();
+
+				// ~60 FPS pacing; the wait also makes shutdown snappy.
+				_frameCv.wait_for(
+					lock, std::chrono::milliseconds(16),
+					[this] { return _renderStop; });
+				if (_renderStop) {
+					break;
+				}
+			}
+		} else {
+			std::unique_lock<std::mutex> lock(_frameMutex);
+			_frameCv.wait_for(
+				lock, std::chrono::milliseconds(16),
+				[this] { return _renderStop; });
+			if (_renderStop) {
+				break;
+			}
+		}
+	}
+
+	// Release the thread's ownership of the context before Release()
+	// destroys the window.  All GL objects are torn down by Release(),
+	// which runs only after this thread has been joined.
+#ifdef _WIN32
+	glfwMakeContextCurrent(NULL);
+#else
+	EglContext::Destroy();
+#endif
+
+	{
+		std::lock_guard<std::mutex> lock(_frameMutex);
+		_hasFrame = false;
+		_renderThreadRunning = false;
+		_frameCv.notify_all();
+	}
+}
+
+void VtuberDelegate::StopRenderThread()
+{
+	{
+		std::lock_guard<std::mutex> lock(_frameMutex);
+		_renderStop = true;
+	}
+	_frameCv.notify_all();
+
+	if (_renderThread.joinable()) {
+		_renderThread.join();
+	}
 }
 
 void VtuberDelegate::Release()
 {
-        //glfwDestroyWindow(_window);
+	// 1. The render thread must not be inside View::Render() while we free
+	//    Cubism/Live2D/View.
+	StopRenderThread();
 
-        //glfwTerminate();
+	// 2. Stop and destroy the input hook before the View/EventManager it may
+	//    use are destroyed.  On Linux Stop() joins the input thread.
+	if (_hook) {
+		_hook->Stop();
+		delete _hook;
+		_hook = NULL;
+	}
 
-        delete _textureManager;
+	// 3. Tear down the rendering context.  No GL calls are made by the OBS
+	//    render thread; the context was created and released by the dedicated
+	//    thread, and this only runs after that thread has exited.
+#ifdef _WIN32
+	if (_window) {
+		glfwMakeContextCurrent(NULL);
+		glfwDestroyWindow(_window);
+		_window = NULL;
+		glfwTerminate();
+	}
+#else
+	EglContext::Destroy();
+#endif
 
-        delete _view;
+	// 4. Free the CPU/GL resources.
+	delete _textureManager;
+	_textureManager = NULL;
 
-        Live2DManager::ReleaseInstance();
+	delete _view;
+	_view = NULL;
 
-	CubismFramework::CleanUp();   
+	Live2DManager::ReleaseInstance();
 
-        CubismFramework::Dispose();
+	CubismFramework::CleanUp();
+	CubismFramework::Dispose();
 }
 
-void VtuberDelegate::Reader(int id,char *buffer,int bufferWidth, int bufferheight)
+bool VtuberDelegate::GetLatestFrame(int &width, int &height,
+				    std::vector<uint8_t> &out)
 {
-	glEnable(GL_MULTISAMPLE);
+	std::lock_guard<std::mutex> lock(_frameMutex);
 
-	glClearColor(0.0, 0.0, 0.0,0.0);
-	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-	//描画更新
-	_view->Render(id);
+	if (!_hasFrame || _frameWidth <= 0 || _frameHeight <= 0 ||
+	    _frameBuffer.empty()) {
+		return false;
+	}
 
-	//写入缓冲
-	glReadPixels(0, 0, bufferWidth, bufferheight, GL_RGBA, GL_UNSIGNED_BYTE,buffer);
+	width = _frameWidth;
+	height = _frameHeight;
+	// Hand the published buffer over instead of copying ~4 MB per frame.
+	// The producer always resizes its own buffer before writing, so the
+	// swap is safe and keeps both sides allocation-free in steady state.
+	out.swap(_frameBuffer);
+	return true;
+}
 
+void VtuberDelegate::Reader(int id, char *buffer, int bufferWidth,
+			    int bufferheight)
+{
+	(void)id;
+
+	if (buffer == NULL || bufferWidth <= 0 || bufferheight <= 0) {
+		return;
+	}
+
+	std::vector<uint8_t> frame;
+	int frameWidth = 0;
+	int frameHeight = 0;
+
+	if (!GetLatestFrame(frameWidth, frameHeight, frame)) {
+		// No frame published yet: clear the OBS buffer so a stale frame
+		// is never shown.
+		memset(buffer, 0, (size_t)bufferWidth * (size_t)bufferheight * 4u);
+		return;
+	}
+
+	const int copyWidth = std::min(bufferWidth, frameWidth);
+	const int copyHeight = std::min(bufferheight, frameHeight);
+	const size_t srcStride = (size_t)frameWidth * 4u;
+	const size_t dstStride = (size_t)bufferWidth * 4u;
+
+	for (int y = 0; y < copyHeight; ++y) {
+		memcpy(buffer + (size_t)y * dstStride,
+		       frame.data() + (size_t)y * srcStride,
+		       (size_t)copyWidth * 4u);
+	}
 }
 
 void VtuberDelegate::UpdataViewWindow(double _x, double _y, int _width,
 				      int _height, double _scale, int _id)
 {
+	std::lock_guard<std::mutex> lock(_viewMutex);
 	_renderInfo[_id].viewPoint_x = _x;
 	_renderInfo[_id].viewPoint_y = _y;
 	_renderInfo[_id].windowWidth = _width/32*32;
@@ -154,12 +399,14 @@ void VtuberDelegate::updataModelSetting(bool _randomMotion, double _delayTime,
 					bool _isMouseHorizontalFlip,bool _isMouseVerticalFlip,
 					int id)
 {
+	std::lock_guard<std::mutex> lock(_viewMutex);
 	Live2DManager::GetInstance()->UpdateModelSetting(
 		_randomMotion, _delayTime, _breath, _eyeBlink, _istrack,
 		_isMouseHorizontalFlip, _isMouseVerticalFlip);
 }
 
 const char **VtuberDelegate::GetModeDefine(int &size) {
+	std::lock_guard<std::mutex> lock(_viewMutex);
 	InfoReader *_infoReader = _view->GetInfoReader();
 
 	size = _infoReader->ModeCount;
@@ -168,9 +415,9 @@ const char **VtuberDelegate::GetModeDefine(int &size) {
 
 void VtuberDelegate::ChangeMode(const char *_mode,bool _live2d,bool _isUseMask, int id)
 {
+	std::lock_guard<std::mutex> lock(_viewMutex);
 	InfoReader *_infoReader = _view->GetInfoReader();
 	for (int i = 0; i < _infoReader->ModeCount; i++) {
-		const char *a = _infoReader->ModePath[i];
 		if (strcmp(_mode, _infoReader->ModePath[i]) == 0) {
 			_view->setMod(i);
 			
@@ -180,6 +427,7 @@ void VtuberDelegate::ChangeMode(const char *_mode,bool _live2d,bool _isUseMask, 
 }
 
 void VtuberDelegate::ChangeMouseMovement(bool _mouse) {
+	std::lock_guard<std::mutex> lock(_viewMutex);
 	Live2DManager::GetInstance()->ChangeMouseMovement(_mouse);
 }
 
@@ -191,7 +439,12 @@ void VtuberDelegate::ChangeModel(const char *ModelName, int id)
 
 VtuberDelegate::VtuberDelegate()
 	: _cubismOption(),
+#ifdef _WIN32
 	  _window(NULL),
+#endif
+	  _view(NULL),
+	  _hook(NULL),
+	  _textureManager(NULL),
 	  ModelFileCount(0)
 {
     _view = new View();

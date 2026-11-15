@@ -3,6 +3,8 @@
 #include"Pal.hpp"
 #include "Define.hpp"
 #include<string>
+#include <cstring>
+#include <memory>
 #include <vector>
 #include"CubismSdk/Framework/src/Type/CubismBasicType.hpp"
 
@@ -41,12 +43,12 @@ InfoReader::InfoReader() : ModeCount(0)
 
 InfoReader::~InfoReader() {
 
-	delete _modeInfo;
-	delete _faceInfo;
-	delete _kpsInfo;
+	delete[] _modeInfo;
+	delete[] _faceInfo;
+	delete[] _kpsInfo;
 
 	for (int i = 0; i < ModeCount; i++) {
-		delete ModePath[i];
+		delete[] ModePath[i];
 	}
 
 	ModeCount = 0;

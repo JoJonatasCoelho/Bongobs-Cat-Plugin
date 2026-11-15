@@ -9,6 +9,7 @@
 
 #define KEYAMOUT 200
 
+#include <mutex>
 #include <queue>
 
 struct KeyEvent {
@@ -23,23 +24,35 @@ public:
     EventManager();
    ~EventManager();
 
-    float GetCenterX() const { return _lastX; }
-    float GetCenterY() const { return _lastY; }
-    float GetDeltaX() const { return _deltaX; }
-    float GetDeltaY() const{ return _deltaY; }
-    float GetStartX() const{ return _startX; }
-    float GetStartY() const{ return _startY; }
-    float GetScale() const { return _scale; }
-    float GetX() const{ return _lastX; }
-    float GetY() const{ return _lastY; }
-    float GetX1() const{ return _lastX1; }
-    float GetY1() const{ return _lastY1; }
-    float GetX2() const{ return _lastX2; }
-    float GetY2() const{ return _lastY2; }
-    bool GetKeySignal(int i) { return _keyEvent[i].KeyBoardSignal; }
-    bool GetKeySignal2(int i) { return _keyEvent[i].KeyBoardSignal; }
-    bool GetRightButton() { return _rightButton; }
-    bool GetLeftButton() { return _leftButton; }
+    float GetCenterX() const { std::lock_guard<std::mutex> lock(_mutex); return _lastX; }
+    float GetCenterY() const { std::lock_guard<std::mutex> lock(_mutex); return _lastY; }
+    float GetDeltaX() const { std::lock_guard<std::mutex> lock(_mutex); return _deltaX; }
+    float GetDeltaY() const { std::lock_guard<std::mutex> lock(_mutex); return _deltaY; }
+    float GetStartX() const { std::lock_guard<std::mutex> lock(_mutex); return _startX; }
+    float GetStartY() const { std::lock_guard<std::mutex> lock(_mutex); return _startY; }
+    float GetScale() const { std::lock_guard<std::mutex> lock(_mutex); return _scale; }
+    float GetX() const { std::lock_guard<std::mutex> lock(_mutex); return _lastX; }
+    float GetY() const { std::lock_guard<std::mutex> lock(_mutex); return _lastY; }
+    float GetX1() const { std::lock_guard<std::mutex> lock(_mutex); return _lastX1; }
+    float GetY1() const { std::lock_guard<std::mutex> lock(_mutex); return _lastY1; }
+    float GetX2() const { std::lock_guard<std::mutex> lock(_mutex); return _lastX2; }
+    float GetY2() const { std::lock_guard<std::mutex> lock(_mutex); return _lastY2; }
+    bool GetKeySignal(int i)
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (i < 0 || i >= KEYAMOUT)
+            return false;
+        return _keyEvent[i].KeyBoardSignal;
+    }
+    bool GetKeySignal2(int i)
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (i < 0 || i >= KEYAMOUT)
+            return false;
+        return _keyEvent[i].KeyBoardSignal;
+    }
+    bool GetRightButton() { std::lock_guard<std::mutex> lock(_mutex); return _rightButton; }
+    bool GetLeftButton() { std::lock_guard<std::mutex> lock(_mutex); return _leftButton; }
 
     /*
     * @brief タッチ開始時イベント
@@ -126,6 +139,8 @@ private:
     */
     float CalculateMovingAmount(float v1, float v2);
 
+    mutable std::mutex _mutex;
+
     float _startY;              // タッチを開始した時のxの値
     float _startX;              // タッチを開始した時のyの値
     float _lastX;               // シングルタッチ時のxの値
@@ -145,4 +160,7 @@ private:
 
     int _relativemouseX;
     int _relativemouseY;
+
+    int _mousePosX;
+    int _mousePosY;
 };

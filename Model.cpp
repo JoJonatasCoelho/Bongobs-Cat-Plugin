@@ -6,6 +6,7 @@
  */
 
 #include "Model.hpp"
+#include <chrono>
 #include <fstream>
 #include <vector>
 #include <CubismModelSettingJson.hpp>
@@ -492,32 +493,35 @@ CubismMotionQueueEntryHandle Model::StartMotion(const csmChar* group, csmInt32 n
         csmString path = fileName;
         path = _modelHomeDir + path;
 
-        csmByte* buffer;
-        csmSizeInt size;
+        csmByte* buffer = NULL;
+        csmSizeInt size = 0;
         buffer = CreateBuffer(path.GetRawString(), &size);
-	if (size == 0)
-		goto end;
-	motion = static_cast<CubismMotion*>(LoadMotion(buffer, size, NULL, onFinishedMotionHandler));
-        csmFloat32 fadeTime = _modelSetting->GetMotionFadeInTimeValue(group, no);
-        if (fadeTime >= 0.0f)
+        if (size != 0)
         {
-            motion->SetFadeInTime(fadeTime);
-	} else {
-		motion->SetFadeInTime(1.0f);
-	}
+            motion = static_cast<CubismMotion*>(LoadMotion(buffer, size, NULL, onFinishedMotionHandler));
+            if (motion != NULL)
+            {
+                csmFloat32 fadeTime = _modelSetting->GetMotionFadeInTimeValue(group, no);
+                if (fadeTime >= 0.0f)
+                {
+                    motion->SetFadeInTime(fadeTime);
+                } else {
+                    motion->SetFadeInTime(1.0f);
+                }
 
-        fadeTime = _modelSetting->GetMotionFadeOutTimeValue(group, no);
-        if (fadeTime >= 0.0f)
-        {
-            motion->SetFadeOutTime(fadeTime);
-	} else {
-		motion->SetFadeOutTime(1.0f);
-	}
+                fadeTime = _modelSetting->GetMotionFadeOutTimeValue(group, no);
+                if (fadeTime >= 0.0f)
+                {
+                    motion->SetFadeOutTime(fadeTime);
+                } else {
+                    motion->SetFadeOutTime(1.0f);
+                }
 
-	//motion->IsLoop(true);
-        motion->SetEffectIds(_eyeBlinkIds, _lipSyncIds);
-        autoDelete = true; // 終了時にメモリから削除
-end:
+                //motion->IsLoop(true);
+                motion->SetEffectIds(_eyeBlinkIds, _lipSyncIds);
+                autoDelete = true; // 終了時にメモリから削除
+            }
+        }
         DeleteBuffer(buffer, path.GetRawString());
     }
     else
@@ -703,7 +707,10 @@ csmFloat32 Model::GetDeltaTime()
 }
 
 void Model::UpdateTime() {
-		s_currentFrame = glfwGetTime();
+		const auto now = std::chrono::steady_clock::now();
+		const std::chrono::duration<double> elapsed =
+			now.time_since_epoch();
+		s_currentFrame = static_cast<Csm::csmFloat32>(elapsed.count());
 		s_deltaTime = s_currentFrame - s_lastFrame;
 		s_lastFrame = s_currentFrame;
 }

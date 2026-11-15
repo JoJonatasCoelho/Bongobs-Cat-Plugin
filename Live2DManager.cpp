@@ -8,7 +8,6 @@
 #include "Live2DManager.hpp"
 #include <string>
 #include <GL/glew.h>
-#include <GLFW/glfw3.h>
 #include <Rendering/CubismRenderer.hpp>
 #include "Pal.hpp"
 #include "Define.hpp"
@@ -16,6 +15,7 @@
 #include "Model.hpp"
 #include "View.hpp"
 #include "EventManager.hpp"
+#include "Hook.hpp"
 
 using namespace Csm;
 using namespace Define;
@@ -90,7 +90,12 @@ void Live2DManager::OnUpdate(Csm::csmUint16 id) const
     int width, height;
     Pal::GetDesktopResolution(width,height);
     int px, py;
-    if (_isUseRelativeMouse) {
+    // Fall back to the relative mouse whenever the absolute cursor position
+    // is not available (Wayland without XWayland, OBS Flatpak sandbox, ...),
+    // otherwise the model would keep looking at the top-left corner.
+    const bool useRelative =
+	    _isUseRelativeMouse || !Hook::IsAbsoluteCursorAvailable();
+    if (useRelative) {
 	    VtuberDelegate::GetInstance()
 		    ->GetView()
 		    ->GetEventManager()

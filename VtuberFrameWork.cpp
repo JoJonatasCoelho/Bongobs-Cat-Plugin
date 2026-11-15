@@ -5,6 +5,11 @@
 #include "VtuberFrameWork.hpp"
 #include"VtuberDelegate.hpp"
 
+#include <algorithm>
+#include <cstdint>
+#include <cstring>
+#include <vector>
+
 namespace {
     static bool isLoad;
 
@@ -25,15 +30,43 @@ void VtuberFrameWork::InitVtuber(int id)
 void VtuberFrameWork::ReanderVtuber(int targatid, char *data, int bufferWidth,
 				    int bufferheight)
 {
+    if (!data || bufferWidth <= 0 || bufferheight <= 0)
+	return;
+
     if (isLoad) {
     
     if (initCount>0 && !isInit) {
 	    isInit = true;
+	    // Starts the dedicated GL render thread.  It returns immediately;
+	    // frames are published asynchronously from now on.
 	    VtuberDelegate::GetInstance()->Initialize(targatid);
     }
 
-    if (isInit)
-	VtuberDelegate::GetInstance()->Reader(targatid, data, bufferWidth,bufferheight);
+    std::vector<uint8_t> frame;
+    int frameWidth = 0;
+    int frameHeight = 0;
+
+    if (!VtuberDelegate::GetInstance()->GetLatestFrame(
+		frameWidth, frameHeight, frame)) {
+	// No frame published yet: clear the OBS buffer so a stale frame is
+	// never shown.
+	memset(data, 0,
+	       (size_t)bufferWidth * (size_t)bufferheight * 4u);
+	return;
+    }
+
+    // Copy only what fits in the OBS buffer.  The frame may be smaller than
+    // the buffer (framebuffer clamped) and must never overflow it.
+    const int copyWidth = std::min(bufferWidth, frameWidth);
+    const int copyHeight = std::min(bufferheight, frameHeight);
+    const size_t srcStride = (size_t)frameWidth * 4u;
+    const size_t dstStride = (size_t)bufferWidth * 4u;
+
+    for (int y = 0; y < copyHeight; ++y) {
+	memcpy(data + (size_t)y * dstStride,
+	       frame.data() + (size_t)y * srcStride,
+	       (size_t)copyWidth * 4u);
+    }
 
     }
 }

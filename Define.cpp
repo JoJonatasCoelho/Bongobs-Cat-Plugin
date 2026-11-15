@@ -52,6 +52,8 @@ namespace Define {
 	    "f1","f2","f3","f4","f5","f6","f7","f8","f9","f10","f11","f12",
 	    "up","down","left","right","<",">","[","]","rshift","rctrl"};
 
+    // Resource folder name relative to Pal::GetResourceRoot(); not an absolute
+    // filesystem path. Build full paths as Pal::GetResourceRoot() + ResourcesPath.
     const csmChar *ResourcesPath = "Bango Cat/";
 
     const csmChar *ModePath= "mode/";

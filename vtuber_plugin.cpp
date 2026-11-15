@@ -39,9 +39,8 @@ bool obs_module_load(void)
 	return true;
 }
 
-#ifdef _WIN32
 void obs_module_unload(void)
 {
-
+	// Toda a limpeza acontece no destroy da source (VtuberDestroy).
 }
-#endif
+

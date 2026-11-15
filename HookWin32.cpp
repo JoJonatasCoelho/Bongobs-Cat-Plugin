@@ -1,14 +1,17 @@
+#ifdef _WIN32
+
 #include "Hook.hpp"
 #include <Windows.h>
+#include <cstdio>
 #include "time.h"
-#include "string" 
+#include "string"
 #include <sstream>
 #include <fstream>
 #include <iostream>
 #include "VtuberDelegate.hpp"
 #include "View.hpp"
-#include<thread>
-#include"EventManager.hpp"
+#include <thread>
+#include "EventManager.hpp"
 #include <tchar.h>
 
 #ifndef HID_USAGE_PAGE_GENERIC
@@ -19,9 +22,9 @@
 #define HID_USAGE_GENERIC_MOUSE ((USHORT)0x02)
 #endif
 
-static HHOOK hhkLowLevelKybd;
+static HHOOK hhkLowLevelKybd = NULL;
 
-static HHOOK hhkLowLevelMs;
+static HHOOK hhkLowLevelMs = NULL;
 
 static int HookCode(DWORD code)
 {
@@ -203,10 +206,10 @@ static int HookCode(DWORD code)
 		key = 52;
 		break;
 	case VK_RIGHT:
-		key = 53;
+		key = 54;
 		break;
 	case VK_LEFT:
-		key = 54;
+		key = 53;
 		break;
 	case VK_OEM_COMMA:
 		key = 55;
@@ -233,7 +236,7 @@ static int HookCode(DWORD code)
 	return key;
 }
 
-LRESULT CALLBACK Hook::KeyboardHookProc(int nCode, WPARAM wParam, LPARAM lParam)
+static LRESULT CALLBACK KeyboardHookProc(int nCode, WPARAM wParam, LPARAM lParam)
 {
 	EventManager *eventManager =VtuberDelegate::GetInstance()->GetView()->GetEventManager();
 
@@ -255,11 +258,12 @@ LRESULT CALLBACK Hook::KeyboardHookProc(int nCode, WPARAM wParam, LPARAM lParam)
 	return CallNextHookEx(NULL, nCode, wParam, lParam);
 }
 
-LRESULT CALLBACK Hook::MouseHookProc(int nCode, WPARAM wParam, LPARAM lParam)
+static LRESULT CALLBACK MouseHookProc(int nCode, WPARAM wParam, LPARAM lParam)
 {
 	EventManager *eventManager =VtuberDelegate::GetInstance()->GetView()->GetEventManager();
 
 	PMSLLHOOKSTRUCT p = (PMSLLHOOKSTRUCT)lParam;
+	(void)p;
 
 	if (nCode == HC_ACTION) { 
 		switch (wParam) {
@@ -285,7 +289,7 @@ LRESULT CALLBACK Hook::MouseHookProc(int nCode, WPARAM wParam, LPARAM lParam)
 	return CallNextHookEx(NULL, nCode, wParam, lParam);
 }
 
-LRESULT Hook::WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
 {
 	switch (msg) {
@@ -329,26 +333,52 @@ LRESULT Hook::WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	return DefWindowProc(hwnd, msg, wParam, lParam);
 }
 
-Hook::Hook() {}
+Hook::Hook() : isExist(false), th(NULL) {}
 
-Hook::~Hook() {}
+Hook::~Hook() {
+	Stop();
+}
 
 void Hook::Strat() {
-	isExist = false;
+	isExist.store(false);
 	th = new std::thread(&Hook::Run, this);
-	th->detach();
 }
 
 void Hook::Stop() {
-	isExist = true;
+	isExist.store(true);
 	UnhookWindowsHookEx(hhkLowLevelKybd);
 	UnhookWindowsHookEx(hhkLowLevelMs);
+
+	// The message loop polls isExist, so the thread ends shortly after the
+	// flag is raised. Joining here keeps the Hook object alive until the
+	// thread is really done (it is deleted right after this call).
+	if (th) {
+		if (th->joinable())
+			th->join();
+		delete th;
+		th = NULL;
+	}
+}
+
+bool Hook::IsAbsoluteCursorAvailable() {
+	// GetCursorPos works on every Windows desktop session.
+	return true;
+}
+
+bool Hook::GetCursorPosition(int &x, int &y) {
+	POINT p;
+	if (GetCursorPos(&p)) {
+		x = p.x;
+		y = p.y;
+		return true;
+	}
+	return false;
 }
 
 void Hook::Run() {
 
-	hhkLowLevelKybd =SetWindowsHookEx(WH_KEYBOARD_LL, Hook::KeyboardHookProc, 0, 0);
-	hhkLowLevelMs =SetWindowsHookEx(WH_MOUSE_LL, Hook::MouseHookProc, 0, 0);
+	hhkLowLevelKybd =SetWindowsHookEx(WH_KEYBOARD_LL, KeyboardHookProc, 0, 0);
+	hhkLowLevelMs =SetWindowsHookEx(WH_MOUSE_LL, MouseHookProc, 0, 0);
 
 	
 	HINSTANCE hInst;
@@ -377,7 +407,7 @@ void Hook::Run() {
 	int OSDleft = GetSystemMetrics(SM_CXSCREEN) / 2 - 300;
 	int OSDTop = GetSystemMetrics(SM_CYSCREEN) / 2;
 
-	m_hWnd = CreateWindowEx(
+	HWND m_hWnd = CreateWindowEx(
 		WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST |
 			WS_EX_TRANSPARENT | WS_EX_NOACTIVATE, 
 		wcx.lpszClassName,
@@ -408,14 +438,19 @@ void Hook::Run() {
 	};
 
 	//message loop
-	BOOL bRet;
+	// PeekMessage (instead of the blocking GetMessage) so the loop can
+	// observe isExist and terminate promptly when the hook is stopped.
 	MSG msg;
-	while ((bRet = GetMessage(&msg, 0, 0, 0)) != 0) {
-		if (bRet == -1||isExist) {
-			break;
-		} else {
+	BOOL bRet;
+	while (!isExist.load()) {
+		while ((bRet = PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) != 0) {
+			if (bRet == -1)
+				break;
 			TranslateMessage(&msg);
 			DispatchMessage(&msg);
 		}
+		Sleep(10);
 	}
 }
+
+#endif // _WIN32

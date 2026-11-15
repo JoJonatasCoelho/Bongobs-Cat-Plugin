@@ -24,7 +24,7 @@ View::View() : _programId(0), _mod(0), isUseLive2d(true), isUseMask(false)
     eventManager = new EventManager();
     
 
-    const string resourcesPath = ResourcesPath;
+    const string resourcesPath = Pal::GetResourceRoot() + ResourcesPath;
     const string modePath = resourcesPath + ModePath;
     const string maskPath = resourcesPath + MaskPath;
 
@@ -300,7 +300,7 @@ void View::InitializeSpirite(int id) {
 	height = VtuberDelegate::GetInstance()->getBufferHeight(id);
 	LAppTextureManager *textureManager =VtuberDelegate::GetInstance()->GetTextureManager();
 
-	const string resourcesPath = ResourcesPath;
+	const string resourcesPath = Pal::GetResourceRoot() + ResourcesPath;
 	const string modePath = resourcesPath+ModePath;
 	const string maskPath = resourcesPath + MaskPath;
 
@@ -474,7 +474,7 @@ void View::InitializeModel(int id)
 	MODE_INFO *_modeinfo = _infoReader->_modeInfo;
 	Live2DManager *Live2DManager = Live2DManager::GetInstance();
 
-	const string resourcesPath = ResourcesPath;
+	const string resourcesPath = Pal::GetResourceRoot() + ResourcesPath;
 	const string modePath = resourcesPath + ModePath;
 	for (int _modelCount = 0; _modelCount < _infoReader->ModeCount;_modelCount++) {
 

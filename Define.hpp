@@ -38,6 +38,9 @@ namespace Define {
     extern const csmInt32 KeyAmount;
     extern const csmChar *KeyDefine[];
 
+    /// Name of the resource folder (with trailing '/'), relative to the root
+    /// returned by Pal::GetResourceRoot(). It is NOT an absolute path; callers
+    /// must build resource paths as Pal::GetResourceRoot() + ResourcesPath.
     extern const csmChar *ResourcesPath;
     extern const csmChar *ModePath;
     extern const csmChar *MaskPath;

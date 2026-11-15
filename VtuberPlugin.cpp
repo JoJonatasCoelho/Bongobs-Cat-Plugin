@@ -10,6 +10,9 @@ namespace{
 	struct Vtuber_data {
 		obs_source_t *source;
 		uint16_t modelId;
+		gs_texture_t *texture;
+		int textureWidth;
+		int textureHeight;
 	};
 
 	}
@@ -23,9 +26,12 @@ const char * VtuberPlugin::VtuberPlugin::VtuberGetName(void *unused)
 void * VtuberPlugin::VtuberPlugin::VtuberCreate(obs_data_t *settings,
 							   obs_source_t *source)
 {
-	Vtuber_data *vtb = (Vtuber_data *)malloc(sizeof(Vtuber_data));
+	Vtuber_data *vtb = new Vtuber_data();
 	vtb->source = source;
 	vtb->modelId = 0;
+	vtb->texture = NULL;
+	vtb->textureWidth = 0;
+	vtb->textureHeight = 0;
 
 	double x = obs_data_get_double(settings, "x");
 	double y = obs_data_get_double(settings, "y");
@@ -58,7 +64,15 @@ void VtuberPlugin::VtuberPlugin::VtuberDestroy(void *data)
 	
 	Vtuber_data *spv = (Vtuber_data *)data;
 
+	// Stop the dedicated render thread and release Cubism/View resources.
 	VtuberFrameWork::UinitVtuber(0);
+
+	obs_enter_graphics();
+	if (spv->texture) {
+		gs_texture_destroy(spv->texture);
+		spv->texture = NULL;
+	}
+	obs_leave_graphics();
 
 	delete spv;
 }
@@ -67,25 +81,45 @@ void VtuberPlugin::VtuberPlugin::VtuberRender(
 	void *data,
 	gs_effect_t *effect)
 {
+	UNUSED_PARAMETER(effect);
+
 	Vtuber_data *spv = (Vtuber_data *)data;
 
 	int width, height;
 	width = VtuberFrameWork::GetWidth(spv->modelId);
 	height = VtuberFrameWork::GetHeight(spv->modelId);
 
+	if (width <= 0 || height <= 0) {
+		return;
+	}
+
 	obs_enter_graphics();
 
-	gs_texture_t *tex =gs_texture_create(width, height, GS_RGBA, 1, NULL, GS_DYNAMIC);
+	// Reuse the texture across frames; only recreate it when its size
+	// changes.
+	if (!spv->texture || spv->textureWidth != width ||
+	    spv->textureHeight != height) {
+		if (spv->texture) {
+			gs_texture_destroy(spv->texture);
+			spv->texture = NULL;
+		}
+		spv->texture = gs_texture_create(width, height, GS_RGBA, 1,
+						 NULL, GS_DYNAMIC);
+		spv->textureWidth = spv->texture ? width : 0;
+		spv->textureHeight = spv->texture ? height : 0;
+	}
 
-	uint8_t *ptr;
-	uint32_t linesize;
-	if (gs_texture_map(tex, &ptr, &linesize))
-		VtuberFrameWork::ReanderVtuber(spv->modelId,(char*) ptr,width,height);
-	gs_texture_unmap(tex);
-	
-	obs_source_draw(tex, 0, 0, 0, 0, true);
+	if (spv->texture) {
+		uint8_t *ptr;
+		uint32_t linesize;
+		if (gs_texture_map(spv->texture, &ptr, &linesize)) {
+			VtuberFrameWork::ReanderVtuber(
+				spv->modelId, (char *)ptr, width, height);
+			gs_texture_unmap(spv->texture);
+		}
 
-	gs_texture_destroy(tex);
+		obs_source_draw(spv->texture, 0, 0, 0, 0, true);
+	}
 
 	obs_leave_graphics();
 }
@@ -104,7 +138,7 @@ uint32_t VtuberPlugin::VtuberPlugin::VtuberHeight(void *data)
 
 static void fill_vtuber_model_list(obs_property_t *p, void *data)
 {
-	Vtuber_data *vtb = (Vtuber_data *)data;
+	UNUSED_PARAMETER(data);
 	int _size;
 	const char **_modeNames= VtuberFrameWork::GetModeDefine(_size);
 
