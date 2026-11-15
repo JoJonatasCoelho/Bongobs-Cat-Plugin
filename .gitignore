@@ -1,0 +1,17 @@
+# Build trees
+build*/
+cmake-build-*/
+.cache/
+compile_commands.json
+
+# Visual Studio / CMake vendored build artifacts (removed from git index)
+gl/
+
+# Object / shared-library output
+*.o
+*.so
+# ...except the Cubism SDK's versioned shared libraries
+!CubismSdk/Core/dll/**/*.so
+
+# NOTE: do NOT ignore *.a globally — the Cubism SDK ships versioned static
+# libraries (e.g. CubismSdk/Core/lib/linux/x86_64/libLive2DCubismCore.a).
