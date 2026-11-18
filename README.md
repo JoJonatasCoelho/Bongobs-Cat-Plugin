@@ -2,6 +2,8 @@
 # Bongobs Cat OBS Plugin
  Obs Live2d 插件
  Bongo cat overlay for OBS plugin. This plugin is based on the built in Live2d CubismNativeFrameWork & Opengl. 
+
+[![Linux build](https://github.com/JoJonatasCoelho/Bongobs-Cat-Plugin/actions/workflows/linux-build.yml/badge.svg)](https://github.com/JoJonatasCoelho/Bongobs-Cat-Plugin/actions/workflows/linux-build.yml)
 # 支持
 * 支持 OBS Studio version : 25.0.0+
 # Support
@@ -41,10 +43,21 @@ sudo apt install build-essential cmake git \
 
 ## Compilando
 
+A forma mais simples (não precisa de `libobs-dev` — usa os headers reais do
+obs-studio e linka contra um stub de importação com o SONAME correto):
+
+```bash
+packaging/build-with-obs-headers.sh --prefix ~/.config/obs-studio
+```
+
+Com o `libobs` de desenvolvimento disponível, o build CMake direto também funciona:
+
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 ```
+
+Detalhes e empacotamento: [`packaging/README.md`](packaging/README.md).
 
 ## Instalando (sem root, layout de usuário do OBS)
 
@@ -92,13 +105,28 @@ No Linux a captura global é feita lendo os dispositivos de entrada do kernel (`
 * Em sessões **Wayland** também funciona (evdev não depende do compositor), mas a **posição
   absoluta do cursor não existe** por padrão no Wayland. Nesse caso o plugin **usa o modo
   relativo automaticamente** (você não precisa ativar *Relative Mouse Movement*).
-* É preciso permissão de leitura em `/dev/input`. Em sistemas com `systemd`/`logind` o usuário da
-  sessão já tem acesso via ACL; caso contrário:
+* É preciso permissão de leitura em `/dev/input`. Duas opções:
+
+  **a) Grupo `input`** (simples, vale para a sessão inteira):
   ```bash
   sudo usermod -aG input "$USER"   # requer novo login
   ```
+
+  **b) Regra udev** (recomendado — dá acesso só ao usuário da sessão ativa):
+  ```bash
+  sudo cp packaging/udev/99-bongobs-cat-input.rules /etc/udev/rules.d/
+  sudo udevadm control --reload-rules
+  sudo udevadm trigger
+  ```
+  Depois saia e entre novamente na sessão (ou reinicie).
+
   Se a permissão faltar, o plugin avisa no log do OBS e continua funcionando (apenas a captura
-  de teclado/mouse fica desativada).
+  de teclado/mouse fica desativada). O log também lista os dispositivos detectados, o que
+  ajuda a conferir se a captura está ativa:
+  ```
+  [bongobs-cat] evdev: /dev/input/event19 (Teclado) -> teclado=sim mouse=nao
+  [bongobs-cat] evdev: 8 dispositivo(s) aberto(s) - 5 teclado(s), 3 mouse(s).
+  ```
 
 ## Observações / limitações
 

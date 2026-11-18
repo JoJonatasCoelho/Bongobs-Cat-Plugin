@@ -4,6 +4,9 @@ cmake-build-*/
 .cache/
 compile_commands.json
 
+# Release bundles produced by packaging/make-release.sh
+dist/
+
 # Visual Studio / CMake vendored build artifacts (removed from git index)
 gl/
 

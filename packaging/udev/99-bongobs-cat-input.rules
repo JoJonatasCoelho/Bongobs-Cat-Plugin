@@ -1,0 +1,22 @@
+# Bongobs Cat - input device access
+#
+# The plugin reads the mouse/keyboard state directly from the kernel input
+# devices in /dev/input/event*.  By default those nodes are owned by root and
+# readable only by the "input" group, which means the user running OBS either
+# has to be added to that group (a security-relevant, session-wide change) or
+# the plugin cannot see the events at all.
+#
+# The rule below tags every input event device with "uaccess" so that systemd-
+# logind grants an ACL to the user of the *active* local session.  The access
+# is therefore limited to whoever is actually sitting in front of the machine
+# and disappears again when the session ends.
+#
+# Install (as root):
+#   sudo cp 99-bongobs-cat-input.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger
+#
+# Then log out and back in (or reboot) so the ACLs are re-applied to the
+# devices that already exist.
+
+KERNEL=="event*", SUBSYSTEM=="input", TAG+="uaccess"
