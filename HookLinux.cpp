@@ -43,6 +43,9 @@ std::once_flag g_waylandLogOnce;
 // Aviso de permissão emitido no máximo uma vez para não inundar o log.
 std::once_flag g_permissionWarned;
 
+// Aviso emitido uma vez quando /dev/input nem existe.
+std::once_flag g_noInputWarned;
+
 bool bitSet(const unsigned long *bits, int code)
 {
 	const size_t bitsPerWord = sizeof(unsigned long) * 8;
@@ -244,8 +247,18 @@ bool classifyDevice(int fd, bool &keyboard, bool &mouse)
 void rescanDevices()
 {
 	DIR *dir = opendir("/dev/input");
-	if (!dir)
+	if (!dir) {
+		std::call_once(g_noInputWarned, [] {
+			blog(LOG_WARNING,
+			     "[bongobs-cat] Não foi possível abrir /dev/input: "
+			     "a captura de teclado/mouse está desativada.");
+		});
 		return;
+	}
+
+	int added = 0;
+	int keyboards = 0;
+	int mice = 0;
 
 	while (struct dirent *entry = readdir(dir)) {
 		if (strncmp(entry->d_name, "event", 5) != 0)
@@ -278,14 +291,28 @@ void rescanDevices()
 		if (ioctl(fd, EVIOCGNAME(sizeof(name)), name) < 0)
 			name[0] = '\0';
 
-		blog(LOG_DEBUG,
-		     "[bongobs-cat] evdev %s (%s): teclado=%d mouse=%d",
-		     path.c_str(), name, keyboard ? 1 : 0, mouse ? 1 : 0);
+		blog(LOG_INFO,
+		     "[bongobs-cat] evdev: %s (%s) -> teclado=%s mouse=%s",
+		     path.c_str(), name[0] ? name : "desconhecido",
+		     keyboard ? "sim" : "nao", mouse ? "sim" : "nao");
+
+		if (keyboard)
+			keyboards++;
+		if (mouse)
+			mice++;
+		added++;
 
 		g_devices.push_back(InputDevice{fd, keyboard, mouse, path});
 	}
 
 	closedir(dir);
+
+	if (added > 0) {
+		blog(LOG_INFO,
+		     "[bongobs-cat] evdev: %d dispositivo(s) aberto(s) - "
+		     "%d teclado(s), %d mouse(s).",
+		     added, keyboards, mice);
+	}
 }
 
 // Lê todos os eventos disponíveis de um device. Retorna false se o device
